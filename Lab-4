@@ -1,0 +1,145 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Load the dataset
+data = pd.read_csv("lung cancer data.csv")
+
+# Preprocess data: Encode categorical features and normalize numerical features
+data['GENDER'] = data['GENDER'].map({'M': 1, 'F': 0})
+data['LUNG_CANCER'] = data['LUNG_CANCER'].map({'YES': 1, 'NO': 0})
+
+# Separate features and target
+X = data.drop('LUNG_CANCER', axis=1).values
+y = data['LUNG_CANCER'].values.reshape(-1, 1)
+
+# Normalize the features
+X = (X - X.mean(axis=0)) / X.std(axis=0)
+
+# Split data into training and test sets
+split_ratio = 0.8
+split_index = int(split_ratio * len(X))
+X_train, X_test = X[:split_index], X[split_index:]
+y_train, y_test = y[:split_index], y[split_index:]
+
+# Sigmoid function and its derivative
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+
+def sigmoid_derivative(x):
+    return x * (1 - x)
+
+def mean_squared_error(y_true, y_pred):
+    return np.mean((y_true - y_pred) ** 2)
+
+def mse_derivative(y_true, y_pred):
+    return y_pred - y_true
+
+# Define the neural network class
+class SimpleNeuralNetwork:
+    def __init__(self, input_size, hidden_size, output_size, learning_rate=0.1):
+        self.weights_input_hidden = np.random.rand(input_size, hidden_size) * 0.1
+        self.weights_hidden_output = np.random.rand(hidden_size, output_size) * 0.1
+        self.bias_hidden = np.zeros((1, hidden_size))
+        self.bias_output = np.zeros((1, output_size))
+        self.learning_rate = learning_rate
+        self.loss_history = []  # Store loss values for visualization
+
+    def forward(self, x):
+        self.hidden_input = np.dot(x, self.weights_input_hidden) + self.bias_hidden
+        self.hidden_output = sigmoid(self.hidden_input)
+        self.final_input = np.dot(self.hidden_output, self.weights_hidden_output) + self.bias_output
+        self.final_output = sigmoid(self.final_input)
+        return self.final_output
+
+    def backward(self, x, y_true):
+        loss = mean_squared_error(y_true, self.final_output)
+        output_error = mse_derivative(y_true, self.final_output) * sigmoid_derivative(self.final_output)
+        hidden_error = np.dot(output_error, self.weights_hidden_output.T) * sigmoid_derivative(self.hidden_output)
+        
+        # Update weights and biases
+        self.weights_hidden_output -= self.learning_rate * np.dot(self.hidden_output.T, output_error)
+        self.bias_output -= self.learning_rate * np.sum(output_error, axis=0, keepdims=True)
+        self.weights_input_hidden -= self.learning_rate * np.dot(x.T, hidden_error)
+        self.bias_hidden -= self.learning_rate * np.sum(hidden_error, axis=0, keepdims=True)
+        
+        return loss
+
+    def train_batch_gradient(self, x_train, y_train, epochs):
+        """ Train with Full Batch Gradient Descent """
+        self.loss_history = []  # Reset loss history for new training
+        for epoch in range(epochs):
+            output = self.forward(x_train)
+            loss = self.backward(x_train, y_train)
+            self.loss_history.append(loss)
+            if epoch % 100 == 0:
+                print(f'Epoch {epoch}, Loss: {loss}')
+
+    def train_mini_batch_gradient(self, x_train, y_train, epochs, batch_size):
+        """ Train with Mini-Batch Stochastic Gradient Descent """
+        self.loss_history = []  # Reset loss history for new training
+        for epoch in range(epochs):
+            epoch_loss = 0
+            # Shuffle the training data at the beginning of each epoch
+            indices = np.random.permutation(len(x_train))
+            x_train_shuffled = x_train[indices]
+            y_train_shuffled = y_train[indices]
+            
+            # Process each mini-batch
+            for i in range(0, len(x_train), batch_size):
+                x_batch = x_train_shuffled[i:i + batch_size]
+                y_batch = y_train_shuffled[i:i + batch_size]
+                
+                output = self.forward(x_batch)
+                loss = self.backward(x_batch, y_batch)
+                epoch_loss += loss
+
+            # Track the average loss per epoch for visualization
+            self.loss_history.append(epoch_loss / (len(x_train) / batch_size))
+            if epoch % 100 == 0:
+                print(f'Epoch {epoch}, Avg Loss: {epoch_loss / (len(x_train) / batch_size)}')
+
+    def predict(self, X):
+        predictions = self.forward(X)
+        return (predictions > 0.5).astype(int)
+
+    def accuracy(self, X, y):
+        predictions = self.predict(X)
+        return np.mean(predictions == y)
+
+# Define network dimensions
+input_size = X_train.shape[1]
+hidden_size = 10  # Adjust hidden layer size as needed
+output_size = 1
+
+# Instantiate the network
+network = SimpleNeuralNetwork(input_size, hidden_size, output_size, learning_rate=0.01)
+
+# Train using batch gradient descent
+print("Training with Full Batch Gradient Descent:")
+network.train_batch_gradient(X_train, y_train, epochs=1000)
+
+# Plot loss over epochs for batch gradient descent
+plt.figure(figsize=(10, 5))
+plt.plot(network.loss_history, label="Full Batch Gradient Descent")
+plt.xlabel("Epochs")
+plt.ylabel("Loss")
+plt.title("Loss Curve for Full Batch Gradient Descent")
+plt.legend()
+plt.show()
+
+# Reinitialize the network for fresh training
+network = SimpleNeuralNetwork(input_size, hidden_size, output_size, learning_rate=0.01)
+
+# Train using mini-batch SGD
+print("\nTraining with Mini-Batch Stochastic Gradient Descent:")
+network.train_mini_batch_gradient(X_train, y_train, epochs=1000, batch_size=16)
+
+# Plot loss over epochs for mini-batch SGD
+plt.figure(figsize=(10, 5))
+plt.plot(network.loss_history, label="Mini-Batch Stochastic Gradient Descent (Batch Size = 16)")
+plt.xlabel("Epochs")
+plt.ylabel("Loss")
+plt.title("Loss Curve for Mini-Batch Stochastic Gradient Descent")
+plt.legend()
+plt.show()
