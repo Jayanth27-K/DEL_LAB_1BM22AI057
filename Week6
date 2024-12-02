@@ -1,0 +1,178 @@
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.autograd import Variable
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader
+import torch.nn.functional as F
+
+# Simple neural network architecture for testing
+class SimpleNN(nn.Module):
+    def __init__(self):
+        super(SimpleNN, self).__init__()
+        self.fc1 = nn.Linear(28*28, 512)
+        self.fc2 = nn.Linear(512, 10)
+
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
+
+# Adversarial example generation (Fast Gradient Sign Method)
+def generate_adversarial_example(model, x, y, epsilon=0.1):
+    x.requires_grad = True
+    output = model(x)
+    loss = F.cross_entropy(output, y)
+    model.zero_grad()
+    loss.backward(retain_graph=True)  # Retain the graph to use it in the next backward pass
+    x_adv = x + epsilon * x.grad.sign()
+    return x_adv
+
+# Tangent Distance Metric (measure distance in tangent space)
+def tangent_distance(x1, x2, model):
+    # Assuming model is a neural network
+    # Compute the gradients of the inputs w.r.t the output
+    x1.requires_grad = True
+    x2.requires_grad = True
+    output1 = model(x1)
+    output2 = model(x2)
+    grad1 = torch.autograd.grad(outputs=output1, inputs=x1, grad_outputs=torch.ones_like(output1), create_graph=True)[0]
+    grad2 = torch.autograd.grad(outputs=output2, inputs=x2, grad_outputs=torch.ones_like(output2), create_graph=True)[0]
+    # Compute the tangent distance as the Euclidean distance of the gradients
+    dist = torch.norm(grad1 - grad2)
+    return dist
+
+# Tangent Propagation (Train using tangent space)
+def tangent_prop(model, x, y, learning_rate=0.001, epsilon=0.1):
+    # Generate adversarial examples
+    x_adv = generate_adversarial_example(model, x, y, epsilon)
+
+    # Make sure x_adv is a leaf variable
+    x_adv = x_adv.detach().requires_grad_(True)
+
+    # Propagate the adversarial example in tangent space
+    output_adv = model(x_adv)
+    loss = F.cross_entropy(output_adv, y)
+
+    # Perform gradient descent to minimize the loss
+    model.zero_grad()
+    loss.backward(retain_graph=True)  # Retain graph to avoid the error
+    for param in model.parameters():
+        param.data -= learning_rate * param.grad.data
+    return model, loss
+
+# Training loop with adversarial training, tangent distance, and tangent prop
+def train_model(model, train_loader, epochs=5):
+    optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+    for epoch in range(epochs):
+        model.train()
+        for data, target in train_loader:
+            data, target = data.view(-1, 28*28), target  # Flatten MNIST images
+            data, target = Variable(data), Variable(target)
+
+            # Adversarial Training
+            x_adv = generate_adversarial_example(model, data, target)
+
+            # Tangent Propagation
+            model, loss = tangent_prop(model, data, target)
+
+            optimizer.zero_grad()
+            loss.backward(retain_graph=True)  # Retain graph for second backward pass
+            optimizer.step()
+
+        print(f"Epoch [{epoch+1}/{epochs}], Loss: {loss.item()}")
+
+# MNIST dataset loading
+transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
+train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+
+# Model initialization and training
+model = SimpleNN()
+train_model(model, train_loader, epochs=5)
+
+
+###
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.datasets import fashion_mnist
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Flatten, Layer
+import matplotlib.pyplot as plt
+
+# Load the Fashion MNIST dataset and take a smaller subset
+(x_train, y_train), (x_test, y_test) = fashion_mnist.load_data()
+subset_size = 1000
+x_train = x_train[:subset_size] / 255.0
+y_train = y_train[:subset_size]
+x_test = x_test[:200] / 255.0
+y_test = y_test[:200]
+
+
+# Model for Adversarial Training
+def create_model():
+  model = Sequential([
+  Flatten(input_shape=(28, 28)),Dense(64, activation='relu'),Dense(10, activation='softmax')
+  ])
+  model.compile(optimizer='adam',loss='sparse_categorical_crossentropy',metrics=['accuracy'])
+  return model
+
+
+def generate_adversarial_examples(model,x,y,epsilon=0.1):
+  np.random.seed(100)
+  perturbations = np.sign(np.random.randn(*x.shape))
+  x_adv = x + epsilon * perturbations
+  return np.clip(x_adv, 0, 1)
+
+  #Tangent Prop regularization layer
+class TangentProp(Layer):
+  def call(self, x):
+    perturbation = tf.random.normal(shape=tf.shape(x), stddev=0.1)
+    return x + perturbation
+
+  # Optimized tangent distance function
+def tangent_distance(x1, x2):
+  return np.linalg.norm(x1 - x2)
+
+#Train the model with Adversarial Training and plot the loss graph
+model = create_model()
+x_adv = generate_adversarial_examples(model, x_train, y_train)
+x_combined = np.concatenate([x_train, x_adv])
+y_combined = np.concatenate([y_train, y_train])
+history_adv = model.fit(x_combined, y_combined, epochs=5, validation_data=(x_test, y_test), verbose=0)
+
+# Apply Tangent Prop to the model
+model_tangent_prop = create_model()
+model_tangent_prop.add(TangentProp())
+history_tangent_prop = model_tangent_prop.fit(x_train, y_train, epochs=5, validation_data=(x_test, y_test),verbose=0)
+loss, accuracy_tangent_prop = model_tangent_prop.evaluate(x_test, y_test, verbose=0)
+print(f'Adversarially Trained Model with Tangent Prop Accuracy: (accuracy_tangent_prop * 100:.2f)%')
+
+# Tangent Distance Classifier
+def classify_with_tangent_distance(x_train, y_train, x_test):
+  x_train_flat = x_train.reshape(x_train.shape[0], -1)
+  x_test_flat = x_test.reshape(x_test.shape[0], -1)
+  y_pred = []
+  for x in x_test_flat:
+    distances = [tangent_distance(x, x_train_flat[i]) for i in range(len(x_train_flat))]
+    nearest_index = np.argmin(distances)
+    y_pred.append(y_train[nearest_index])
+  return np.array(y_pred)
+
+y_pred = classify_with_tangent_distance(x_train, y_train, x_test)
+accuracy_tangent_classifier = np.mean(y_pred == y_test)
+print(f'Tangent Classifier Accuracy: {accuracy_tangent_classifier * 100:.2f}%')
+
+# Evaluate the Adversarially Trained model with Tangent Prop
+loss, accuracy_tangent_prop = model_tangent_prop.evaluate(x_test, y_test, verbose=0)
+print(f'Adversarially Trained Model with Tangent Prop Accuracy: {accuracy_tangent_prop *100:.2f}%')
+
+# Plot the loss graph
+plt.plot(history_adv.history['loss'], label='Adversarial Training Loss')
+plt.plot(history_tangent_prop.history['loss'], label='Tangent Prop Training Loss')
+plt.xlabel('Epochs')
+plt.ylabel('Loss')
+plt.legend()
+plt.title('Training Loss')
+plt.show()
